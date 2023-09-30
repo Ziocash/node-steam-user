@@ -8,8 +8,6 @@ const EResult = require('../enums/EResult.js');
 const SteamUserBase = require('./00-base.js');
 const SteamUserWebAPI = require('./06-webapi.js');
 
-const Helpers = require('./helpers.js');
-
 class SteamUserWeb extends SteamUserWebAPI {
 	/**
 	 * Log onto steamcommunity.com. Emits {@link SteamUser#event:webSession} on success.
@@ -17,15 +15,15 @@ class SteamUserWeb extends SteamUserWebAPI {
 	webLogOn() {
 		// Verify logged on
 		if (!this.steamID) {
-			throw new Error("Cannot log onto steamcommunity.com without first being connected to Steam network");
+			throw new Error('Cannot log onto steamcommunity.com without first being connected to Steam network');
 		}
 
 		// Verify not anonymous user
 		if (this.steamID.type != SteamID.Type.INDIVIDUAL) {
-			throw new Error('Must not be anonymous user to use webLogOn (check to see you passed in valid credentials to logOn)')
+			throw new Error('Must not be anonymous user to use webLogOn (check to see you passed in valid credentials to logOn)');
 		}
 
-		if (!Helpers.newAuthCapable() || !this._logOnDetails.access_token) {
+		if (!this._logOnDetails.access_token) {
 			// deprecated
 			this._send(EMsg.ClientRequestWebAPIAuthenticateUserNonce, {});
 			return;
@@ -34,11 +32,7 @@ class SteamUserWeb extends SteamUserWebAPI {
 		// The client uses access tokens for its session cookie now. Even though we might already technically have an
 		// access token available from your initial auth, the client always requests a new one, so let's mimic that behavior.
 
-		const {LoginSession, EAuthTokenPlatformType} = require('steam-session');
-		const CMAuthTransport = require('./classes/CMAuthTransport.js');
-
-		let transport = new CMAuthTransport(this);
-		let session = new LoginSession(EAuthTokenPlatformType.SteamClient, {transport});
+		let session = this._getLoginSession();
 		session.refreshToken = this._logOnDetails.access_token;
 		session.getWebCookies().then((cookies) => {
 			if (!cookies.some(c => c.startsWith('sessionid='))) {

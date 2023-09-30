@@ -9,6 +9,10 @@ const Schema = require('../protobufs/generated/_load.js');
 const EMsg = require('../enums/EMsg.js');
 const EResult = require('../enums/EResult.js');
 
+// steam-session dependencies
+const {LoginSession, EAuthTokenPlatformType} = require('steam-session');
+const CMAuthTransport = require('./classes/CMAuthTransport');
+
 const JOBID_NONE = '18446744073709551615';
 const PROTO_MASK = 0x80000000;
 
@@ -357,8 +361,8 @@ class SteamUserMessages extends SteamUserConnection {
 		}
 
 		let decoded = proto.decode(encoded);
-		let objNoDefaults = proto.toObject(decoded, {"longs": String});
-		let objWithDefaults = proto.toObject(decoded, {"defaults": true, "longs": String});
+		let objNoDefaults = proto.toObject(decoded, {longs: String});
+		let objWithDefaults = proto.toObject(decoded, {defaults: true, longs: String});
 		return replaceDefaults(objNoDefaults, objWithDefaults);
 
 		function replaceDefaults(noDefaults, withDefaults) {
@@ -367,7 +371,7 @@ class SteamUserMessages extends SteamUserConnection {
 			}
 
 			for (let i in withDefaults) {
-				if (!withDefaults.hasOwnProperty(i)) {
+				if (!Object.hasOwnProperty.call(withDefaults, i)) {
 					continue;
 				}
 
@@ -412,7 +416,7 @@ class SteamUserMessages extends SteamUserConnection {
 	 */
 	_send(emsgOrHeader, body, callback) {
 		// header fields: msg, proto, sourceJobID, targetJobID
-		let header = typeof emsgOrHeader === 'object' ? emsgOrHeader : {"msg": emsgOrHeader};
+		let header = typeof emsgOrHeader === 'object' ? emsgOrHeader : {msg: emsgOrHeader};
 		let emsg = header.msg;
 
 		let canWeSend = this.steamID ||
@@ -524,7 +528,7 @@ class SteamUserMessages extends SteamUserConnection {
 
 		this.emit('debug-traffic-incoming', buffer, eMsg);
 
-		let header = {"msg": eMsg};
+		let header = {msg: eMsg};
 		if ([EMsg.ChannelEncryptRequest, EMsg.ChannelEncryptResult].includes(eMsg)) {
 			// for encryption setup, we just have a very small header with two fields
 			header.targetJobID = buf.readUint64().toString();
@@ -621,17 +625,17 @@ class SteamUserMessages extends SteamUserConnection {
 			// this message expects a response. make a callback we can pass to the end-user.
 			cb = (emsgOrHeader, body) => {
 				// once invoked the callback should set the jobid_target
-				let responseHeader = typeof emsgOrHeader === 'object' ? emsgOrHeader : {"msg": emsgOrHeader};
+				let responseHeader = typeof emsgOrHeader === 'object' ? emsgOrHeader : {msg: emsgOrHeader};
 				let emsg = responseHeader.msg;
 
 				if (protobufs[emsg]) {
-					responseHeader.proto = {"jobid_target": header.sourceJobID};
+					responseHeader.proto = {jobid_target: header.sourceJobID};
 				} else {
 					responseHeader.targetJobID = header.sourceJobID;
 				}
 
 				this._send(responseHeader, body);
-			}
+			};
 		}
 
 		if (this._jobs[header.targetJobID]) {
@@ -722,13 +726,23 @@ class SteamUserMessages extends SteamUserConnection {
 	_sendUnified(methodName, methodData, callback) {
 		let Proto = protobufs[methodName + (callback ? '_Request' : '')];
 		let header = {
-			"msg": EMsg.ServiceMethodCallFromClient,
-			"proto": {
-				"target_job_name": methodName
+			msg: EMsg.ServiceMethodCallFromClient,
+			proto: {
+				target_job_name: methodName
 			}
 		};
 
 		this._send(header, SteamUserMessages._encodeProto(Proto, methodData), callback);
+	}
+
+	_getLoginSession() {
+		if (!this._loginSession) {
+			this._loginSession = new LoginSession(EAuthTokenPlatformType.SteamClient, {
+				transport: new CMAuthTransport(this)
+			});
+		}
+
+		return this._loginSession;
 	}
 }
 
