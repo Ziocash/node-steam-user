@@ -282,7 +282,28 @@ class SteamUserLogon extends SteamUserMachineAuth {
 				break;
 		}
 
-		let cmListResponse = await this._apiRequest('GET', 'ISteamDirectory', 'GetCMListForConnect', 1, getCmListQueryString, 300);
+		let cmListResponse;
+		try {
+			cmListResponse = await this._apiRequest(
+				'GET',
+				'ISteamDirectory',
+				'GetCMListForConnect',
+				1,
+				getCmListQueryString,
+				300
+			);
+		} catch (ex) {
+			this.emit('debug', `GetCMListForConnect error: ${ex.message}`);
+
+			if (++this._getCmListAttempts >= 10) {
+				this.emit('error', ex);
+			} else {
+				setTimeout(() => this._doConnection());
+			}
+
+			return;
+		}
+
 		if (!cmListResponse.response || !cmListResponse.response.serverlist || Object.keys(cmListResponse.response.serverlist).length == 0) {
 			this.emit('error', new Error('No Steam servers available'));
 			return;
@@ -744,8 +765,6 @@ class SteamUserLogon extends SteamUserMachineAuth {
 						// The new way of getting web cookies is to use a refresh token to get a fresh access token, which
 						// is what's used as the cookie. Confusingly, access_token in CMsgClientLogOn is actually a refresh token.
 						this.webLogOn();
-					} else if (body.webapi_authenticate_user_nonce) {
-						this._webAuthenticate(body.webapi_authenticate_user_nonce);
 					}
 				} else if (this.steamID.type == SteamID.Type.ANON_USER) {
 					this._getLicenseInfo();
