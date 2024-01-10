@@ -43,15 +43,24 @@ class SteamUserLogon extends SteamUserMachineAuth {
 	 */
 	logOn(details) {
 		// Delay the actual logon by one tick, so if users call logOn from the error event they won't get a crash because
-		// they appear to be already logged on (the steamID property is set to null only *after* the error event is emitted)
+		// they appear to be already logged on (the steamID property is set to null only *after* the error event is emitted).
+		// Go ahead and create the Error now, so that we'll have a useful stack trace if we need to throw it.
+		let alreadyLoggedOnError = new Error('Already logged on, cannot log on again');
+		let alreadyConnectingError = new Error('Already attempting to log on, cannot log on again');
 		process.nextTick(async () => {
 			if (this.steamID) {
-				throw new Error('Already logged on, cannot log on again');
+				throw alreadyLoggedOnError;
+			}
+
+			if (this._connecting) {
+				throw alreadyConnectingError;
 			}
 
 			this.steamID = null;
+			this._cancelReconnectTimers();
 			this._initProperties();
 
+			this._connecting = true;
 			this._loggingOff = false;
 
 			if (details !== true) {
@@ -296,15 +305,17 @@ class SteamUserLogon extends SteamUserMachineAuth {
 			this.emit('debug', `GetCMListForConnect error: ${ex.message}`);
 
 			if (++this._getCmListAttempts >= 10) {
+				this._cleanupClosedConnection();
 				this.emit('error', ex);
 			} else {
-				setTimeout(() => this._doConnection());
+				setTimeout(() => this._doConnection(), 1000);
 			}
 
 			return;
 		}
 
 		if (!cmListResponse.response || !cmListResponse.response.serverlist || Object.keys(cmListResponse.response.serverlist).length == 0) {
+			this._cleanupClosedConnection();
 			this.emit('error', new Error('No Steam servers available'));
 			return;
 		}
@@ -471,7 +482,16 @@ class SteamUserLogon extends SteamUserMachineAuth {
 	_enqueueLogonAttempt() {
 		let timer = this._logonTimeoutDuration || 1000;
 		this._logonTimeoutDuration = Math.min(timer * 2, 60000); // exponential backoff, max 1 minute
+		this.emit('debug', `Enqueueing login attempt in ${timer} ms`);
 		this._logonTimeout = setTimeout(() => {
+			if (this.steamID || this._connecting) {
+				// Not sure why this happened, but we're already connected
+				let whyFail = this.steamID ? 'already connected' : 'already attempting to connect';
+				this.emit('debug', `!! Attempted to fire queued login attempt, but we're ${whyFail}`);
+				return;
+			}
+
+			this.emit('debug', 'Firing queued login attempt');
 			this.logOn(true);
 		}, timer);
 	}
@@ -678,6 +698,11 @@ class SteamUserLogon extends SteamUserMachineAuth {
 
 	async _handleLogOnResponse(body) {
 		this.emit('debug', `Handle logon response (${EResult[body.eresult]})`);
+
+		this._connecting = false;
+
+		clearTimeout(this._reconnectForCloseDuringAuthTimeout);
+		delete this._reconnectForCloseDuringAuthTimeout;
 
 		clearTimeout(this._logonMsgTimeout);
 		delete this._logonMsgTimeout;
